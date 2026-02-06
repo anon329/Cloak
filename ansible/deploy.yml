@@ -1,0 +1,34 @@
+- hosts: all
+  become: true
+  tasks:
+    - name: Install dependencies
+      apt:
+        name:
+          - build-essential
+          - pkg-config
+          - libssl-dev
+          - rustup
+        update_cache: true
+
+    - name: Install rust toolchain
+      command: rustup install stable
+      become: false
+
+    - name: copy source files to remote server
+      copy: 
+        src: "{{ item.src }}" 
+        dest: "{{ item.dest }}"
+      loop:
+        - src: ../src
+          dest: /home/ubuntu/crepe-rust/
+        - src: ../Cargo.toml
+          dest: /home/ubuntu/crepe-rust/
+        - src: ../Cargo.lock
+          dest: /home/ubuntu/crepe-rust/
+        
+    - name: build the project locally
+      command: cargo build --release
+      args:
+        chdir: /home/ubuntu/crepe-rust/
+
+      

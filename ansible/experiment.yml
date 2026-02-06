@@ -1,0 +1,167 @@
+- hosts: all
+  tasks:
+    - name: ensure config directory exists on remote
+      file:
+        path: /home/ubuntu/crepe-rust/{{ config_file | dirname }}
+        state: directory
+        mode: '0755'
+
+    - name: copy config file to remotes
+      copy:
+        src: ../{{ config_file }}
+        dest: /home/ubuntu/crepe-rust/{{ config_file }}
+
+    - name: ensure benchmark directory exists on remote
+      file:
+        path: /home/ubuntu/crepe-rust/{{ input_file | dirname }}
+        state: directory
+        mode: '0755'
+
+    - name: copy workload files to remote
+      copy:
+        src: ../{{ input_file }}
+        dest: /home/ubuntu/crepe-rust/{{ input_file }}
+
+    - name: delete stats from previous run
+      file:
+        path: /home/ubuntu/crepe-rust/benchmark/stats.txt
+        state: absent
+      when: inventory_hostname in groups['client']
+    
+    - name: delete budget log from previous run
+      file:
+        path: /home/ubuntu/crepe-rust/benchmark/budget_log_file.txt
+        state: absent
+      when: inventory_hostname in groups['proxy']
+
+    - name: delete ratio file from previous run
+      file:
+        path: /home/ubuntu/crepe-rust/benchmark/ratio.txt
+        state: absent
+      when: inventory_hostname in groups['proxy']
+
+    - name: kill existing server
+      command: fuser -k 4000/tcp 
+      become: true
+      ignore_errors: true
+
+    - name: kill existing proxy
+      command: fuser -k 5050/tcp
+      become: true
+      ignore_errors: true
+
+    - name: run server
+      command: ./target/release/server --config "{{ config_file }}" {{ extra_args | default('') }}
+      args:
+        chdir: /home/ubuntu/crepe-rust/
+      async: 1000
+      poll: 0
+      when: inventory_hostname in groups['server'] 
+
+    - name: delay for 5 seconds
+      command: sleep 5
+
+    - name: run proxy
+      command: ./target/release/proxy --config "{{ config_file }}" {{ extra_args | default('') }}
+      args:
+        chdir: /home/ubuntu/crepe-rust/
+      async: 1000
+      poll: 0
+      register: proxy_job
+      when: inventory_hostname in groups['proxy']
+
+    - name: check if proxy is up
+      shell: ss -lntp | grep ':5050'
+      register: nc_result
+      until: nc_result.rc == 0
+      retries: 100
+      delay: 5
+      when: inventory_hostname in groups['proxy']
+
+    - name: run client
+      command: ./target/release/client --config "{{ config_file }}" --client-input-file "{{ input_file }}" {{ extra_args | default('') }}
+      args:
+        chdir: /home/ubuntu/crepe-rust/
+      async: 1000
+      poll: 0
+      register: client_job
+      when: inventory_hostname in groups['client'] 
+
+    - name: Check on client
+      async_status:
+        jid: "{{ client_job.ansible_job_id }}"
+      register: job_result
+      until: job_result is finished
+      retries: 100
+      delay: 10
+      ignore_errors: true
+      when: inventory_hostname in groups['client']
+
+    - name: Check on proxy
+      async_status:
+        jid: "{{ proxy_job.ansible_job_id }}"
+      register: proxy_result
+      until: proxy_result is finished
+      retries: 100
+      delay: 10
+      ignore_errors: true
+      when: inventory_hostname in groups['proxy']
+
+    - name: run budget ratio
+      command: ./target/release/budget_ratio benchmark/budget_log_file.txt
+      args:
+        chdir: /home/ubuntu/crepe-rust/
+      when: inventory_hostname in groups['proxy']
+
+    - name: check if this is the first run
+      delegate_to: localhost
+      become: false
+      stat: 
+        path: ../{{ output_dir }}/res-stats-{{ input_file | basename }}{{ extra_args | default('') }}.txt
+      register: ratio_file_check
+
+    - name: copy budget ratio to local
+      fetch:
+        src: /home/ubuntu/crepe-rust/benchmark/ratio.txt
+        dest: ../{{ output_dir }}/res-ratio-{{ input_file | basename }}{{ extra_args | default('') }}.txt
+        flat: true
+      when: inventory_hostname in groups['proxy'] and not ratio_file_check.stat.exists
+
+    - name: copy stats file to local
+      fetch:
+        src: /home/ubuntu/crepe-rust/benchmark/stats.txt
+        dest: ../{{ output_dir }}/res-stats-{{ input_file | basename }}{{ extra_args | default('') }}.txt
+        flat: true
+      when: inventory_hostname in groups['client'] and not ratio_file_check.stat.exists
+
+    - name: get the second line of the stats file
+      command: sed -n '2p' /home/ubuntu/crepe-rust/benchmark/stats.txt
+      register: stats_line
+      when: inventory_hostname in groups['client']
+
+    - name: get the second line of the ratio file
+      command: sed -n '2p' /home/ubuntu/crepe-rust/benchmark/ratio.txt
+      register: ratio_line
+      when: inventory_hostname in groups['proxy']
+
+    - name: append stats to local file
+      become: false
+      local_action: lineinfile
+      args:
+        path: ../{{ output_dir }}/res-stats-{{ input_file | basename }}{{ extra_args | default('') }}.txt
+        line: "{{ stats_line.stdout }}"
+        insertafter: EOF
+      ignore_errors: true
+      when: ratio_file_check.stat.exists
+
+    - name: append ratio to local file
+      become: false
+      local_action: lineinfile
+      args:
+        path: ../{{ output_dir }}/res-ratio-{{ input_file | basename }}{{ extra_args | default('') }}.txt
+        line: "{{ ratio_line.stdout }}"
+        insertafter: EOF
+      ignore_errors: true
+      when: ratio_file_check.stat.exists
+          
+

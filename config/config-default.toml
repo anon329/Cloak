@@ -1,0 +1,38 @@
+# Common configuration shared across components
+[common]
+# Network configuration
+server_addr = "127.0.0.1:4000"  # Storage server address
+server_addr_bind = "0.0.0.0:4000"
+proxy_addr = "127.0.0.1:5050"   # Proxy server address
+proxy_addr_bind = "0.0.0.0:5050"
+
+# Object configuration
+object_size = 1024              # Size of each object in bytes
+crypto_overhead = 32            # Size of object without encryption overhead
+
+# Storage configuration
+storage_size = 1000000          # Total number of objects in storage
+
+[server]
+# Server-specific settings
+max_read_size = 10000000        # Maximum batch read size
+
+[proxy]
+# Proxy-specific settings
+first_batch_size = 433        # Size of first time-set batch
+queue_coefficient = 2          # Multiplier for queue size vs budget
+cache_size = 100             # Size of LRU cache
+num_threads = 16               # Number of worker threads
+budget_log_file = "benchmark/budget_log_file.txt"   # File to log time-set budget statistics
+is_unsafe = false
+batch_interval_ms = 20        # Time interval in milliseconds to trigger batch processing
+enable_budget_log = true       # Enable/disable budget log file writing
+
+[client]
+# Client-specific settings
+num_clients = 1               # Number of concurrent clients
+req_per_sec = 1000000           # Target request rate
+input_file = "benchmark/s1.0-workload"   # Workload file
+output_file = "benchmark/output.txt"        # Results file
+stats_file = "benchmark/stats.txt"
+enable_output_log = true       # Enable/disable output log file writing
